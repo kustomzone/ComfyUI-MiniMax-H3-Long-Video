@@ -483,6 +483,28 @@ Preserve continuity.
         with self.assertRaisesRegex(ValueError, "sequential starting at 1"):
             slice_prompt(prompt, 0.0, 10.0)
 
+    def test_inline_shot_references_are_not_parsed_as_headers(self):
+        prompt = """detailed_description:
+Only Shot references [Shot 1] and [Shot 3] are slow-motion highlights.
+[Shot 1] Start the attack.
+[Shot 2] At 00:01.000, continue the attack.
+[Shot 3] Finish the attack.
+"""
+        sliced = slice_prompt(prompt, 0.0, 5.0)
+        self.assertIn("Start the attack", sliced)
+        self.assertIn("continue the attack", sliced)
+        self.assertIn("Finish the attack", sliced)
+
+    def test_timeline_error_identifies_unplaceable_trailing_shots(self):
+        prompt = (
+            "[Shot 1] Start. [Shot 2] At 00:10.500, anchor. "
+            "[Shot 3] Finish."
+        )
+        with self.assertRaisesRegex(
+                ValueError,
+                r"1 untimestamped Shot\(s\).*Shot 2 at 00:10\.500.*ends at 00:10\.000"):
+            slice_prompt(prompt, 0.0, 5.0, timeline_duration_seconds=10.0)
+
 
 if __name__ == "__main__":
     unittest.main()

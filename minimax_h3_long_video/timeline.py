@@ -68,7 +68,10 @@ def plan_segments(output_frames, context_frames, has_initial_latent, max_raw_fra
 
 _TIMESTAMP = re.compile(r"(?<!\d)(?:(\d{1,2}):)?(\d{2}):(\d{2})\.(\d{3})(?!\d)")
 _SHOT = re.compile(
-    r"\[Shot\s+(\d+)\](?:\s+At\s+((?:(?:\d{1,2}):)?\d{2}:\d{2}\.\d{3}))?\s*,?",
+    r"(?mi)^[ \t]*\[Shot\s+(\d+)\](?:\s+At\s+((?:\d{1,2}:)?\d{2}:\d{2}\.\d{3}))?\s*,?"
+)
+_INLINE_SHOT = re.compile(
+    r"\[Shot\s+(\d+)\](?:\s+At\s+((?:\d{1,2}:)?\d{2}:\d{2}\.\d{3}))?\s*,?",
     re.IGNORECASE,
 )
 _INTEGRATED = re.compile(
@@ -234,6 +237,13 @@ def _timeline_field(prompt):
     return field_name, match
 
 
+def _shot_matches(text):
+    matches = list(_SHOT.finditer(text))
+    if matches and ("\n" in text or len(matches) > 1):
+        return matches
+    return list(_INLINE_SHOT.finditer(text))
+
+
 def _fallback_prompt(prompt, start_seconds, context_seconds):
     def rebase(match):
         absolute = parse_timestamp(match.group(0))
@@ -263,7 +273,7 @@ def slice_prompt(prompt, start_seconds, end_seconds, context_seconds=0.0,
         prefix = ""
         wrapped = False
 
-    all_matches = list(_SHOT.finditer(content))
+    all_matches = _shot_matches(content)
     if not all_matches:
         return _fallback_prompt(prompt, start_seconds, context_seconds)
     first_shot = all_matches[0]
@@ -278,7 +288,7 @@ def slice_prompt(prompt, start_seconds, end_seconds, context_seconds=0.0,
     global_tail = content[tail.end():].strip() if tail is not None else ""
     body = content[first_shot.start():body_end].strip()
 
-    matches = list(_SHOT.finditer(body))
+    matches = _shot_matches(body)
     if not matches:
         return _fallback_prompt(prompt, start_seconds, context_seconds)
 
@@ -338,7 +348,20 @@ def slice_prompt(prompt, start_seconds, end_seconds, context_seconds=0.0,
             if timeline_end is None:
                 timeline_end = master_end_seconds
             if timeline_end <= starts[last]:
-                raise ValueError("H3 timeline must end after its final timestamped Shot")
+                final_number = parsed[last][0]
+                trailing_count = len(starts) - last - 1
+                raise ValueError(
+                    "H3 timeline cannot place {} untimestamped Shot(s) after "
+                    "Shot {} at {} because the configured timeline ends at {}. "
+                    "Increase the video length, add timestamps, or remove/correct "
+                    "the timestamp."
+                    .format(
+                        trailing_count,
+                        final_number,
+                        format_timestamp(starts[last]),
+                        format_timestamp(timeline_end),
+                    )
+                )
             gap = len(starts) - last - 1
             step = (timeline_end - starts[last]) / (gap + 1)
             for offset in range(1, gap + 1):
